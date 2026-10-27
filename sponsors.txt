@@ -1,0 +1,121 @@
+# H-1B sponsor list used by watcher.py (one company per line).
+# Starter list of large, well-known H-1B sponsors.
+# Expand it with build_sponsors.py using official USCIS data (see README).
+# Lines starting with # are ignored. Add companies by hand anytime.
+Accenture
+Adobe
+Airbnb
+American Express
+AMD
+Amazon
+Apple
+Applied Materials
+AT&T
+Bain
+Bank of America
+BlackRock
+Bloomberg
+Booking
+Boston Consulting Group
+Bristol Myers Squibb
+Broadcom
+Capgemini
+Capital One
+Cardinal Health
+Chewy
+Cigna
+Cisco
+Citi
+Citibank
+Citigroup
+Cognizant
+Comcast
+CVS Health
+Databricks
+Dell
+Deloitte
+Discover
+DoorDash
+eBay
+Elevance Health
+Eli Lilly
+EPAM
+Ernst & Young
+EY
+Expedia
+Fannie Mae
+Fidelity
+Ford
+Freddie Mac
+Genpact
+Goldman Sachs
+Google
+HCL
+Hexaware
+Hilton
+Home Depot
+HP
+Humana
+IBM
+Infosys
+Intel
+Intercontinental Exchange
+Intuit
+Johnson & Johnson
+JPMorgan Chase
+JP Morgan
+U.S. Bank
+KPMG
+LexisNexis
+LinkedIn
+LTIMindtree
+Lowe's
+Lyft
+Marriott
+Mastercard
+McKinsey
+Merck
+Meta
+Micron
+Microsoft
+Moody's
+Morgan Stanley
+Mphasis
+Nasdaq
+Netflix
+Northern Trust
+NVIDIA
+Optum
+Oracle
+PayPal
+Persistent Systems
+Pfizer
+PricewaterhouseCoopers
+PwC
+Qualcomm
+RELX
+S&P Global
+Salesforce
+ServiceNow
+Slalom
+Snowflake
+Spotify
+State Street
+Stripe
+Synchrony
+Target
+Tata Consultancy Services
+Tech Mahindra
+Tesla
+Texas Instruments
+Uber
+UnitedHealth
+Vanguard
+Virtusa
+Visa
+Walmart
+Wayfair
+Wells Fargo
+Wipro
+Workday
+ZS Associates
