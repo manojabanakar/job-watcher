@@ -37,9 +37,11 @@ SEARCH_TERMS = [
 
 LOCATION = "United States"
 
-# Sites to check. Indeed is the most reliable from GitHub servers.
-# LinkedIn often blocks cloud servers; failures are logged and skipped.
-SITES = ["indeed", "linkedin", "google"]
+# Sites to check. Each site runs separately; if one fails or is blocked,
+# the error is logged and the others still run.
+# Note: zip_recruiter and glassdoor round "hours old" up to 1 day, so a job
+# first seen there may be up to ~24 hours old.
+SITES = ["indeed", "linkedin", "google", "zip_recruiter", "glassdoor"]
 
 # Only look at jobs posted within this many hours. Runs every 15 min, so 2
 # hours gives overlap if a run is late. Already-alerted jobs are skipped.
@@ -85,6 +87,13 @@ TITLE_EXCLUDE = [
     r"\bclearance\b",
     r"\bTS/SCI\b",
 ]
+
+# Company names matching these are dropped. Empty by default: companies with
+# "Federal" or "Defense" in the name (e.g. Navy Federal Credit Union) can
+# still sponsor. Roles that need citizenship or clearance are already dropped
+# by NO_SPONSORSHIP_PATTERNS and TITLE_EXCLUDE. Add regexes here to skip
+# specific companies, e.g. r"\bacme federal\b".
+COMPANY_EXCLUDE = []
 
 # Skip jobs whose lowest stated experience requirement is above this.
 MAX_YEARS_EXPERIENCE = 3
@@ -314,7 +323,7 @@ def scrape_all():
                 verbose=0,
             )
             if site == "google":
-                kwargs["google_search_term"] = f"{term} jobs in the United States since yesterday"
+                kwargs["google_search_term"] = f"{term} jobs near United States since yesterday"
             if site == "linkedin" and FETCH_LINKEDIN_DESCRIPTION:
                 kwargs["fetch_description"] = True
             try:
@@ -351,6 +360,8 @@ def evaluate(job: dict, sponsors: set):
         return False, "title", None, None
     if not job["company"]:
         return False, "no company", None, None
+    if any_match(COMPANY_EXCLUDE, job["company"]):
+        return False, "company excluded", None, None
     years = min_years_required(job["description"])
     if years is not None and years > MAX_YEARS_EXPERIENCE:
         return False, f"{years}+ yrs", None, years

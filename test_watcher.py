@@ -4,6 +4,8 @@ import json
 
 import watcher as w
 
+w.load_sponsors_orig = w.load_sponsors
+
 SPONSORS = {w.normalize_company(x) for x in ["Capital One", "Amazon", "Johnson & Johnson", "Citi"]}
 
 
@@ -104,7 +106,39 @@ def test_full_run(tmp_path, monkeypatch):
     assert pushes == []  # nothing new on third run
 
 
-w.load_sponsors_orig = w.load_sponsors
+
+
+def test_federal_named_company_kept_but_clearance_dropped():
+    job = make_job("Data Analyst", "Navy Federal Credit Union", "2 years experience")
+    keep, _, tag, _ = w.evaluate(job, SPONSORS | {"navy federal credit union"})
+    assert keep and tag == "KNOWN"
+    job = make_job("Data Analyst", "Some Federal Co", "Active Secret clearance required")
+    keep, reason, _, _ = w.evaluate(job, SPONSORS)
+    assert not keep and reason == "no sponsorship / clearance"
+
+
+def test_build_sponsors_long_and_wide(tmp_path, monkeypatch):
+    import build_sponsors as b
+    data = tmp_path / "uscis_data"
+    data.mkdir()
+    (data / "long.csv").write_text(
+        "Fiscal Year ,Employer (Petitioner) Name,Measure Names,Measure Values\n"
+        "2026,BETA DATA CORP,New Employment Approval,\"1,204\"\n"
+        "2026,BETA DATA CORP,Continuation Approval,10\n"
+        "2026,RENEW ONLY LLC,Continuation Approval,7\n"
+        "2026,RENEW ONLY LLC,New Employment Approval,0\n")
+    (data / "wide.csv").write_text(
+        "Fiscal Year,Employer (Petitioner) Name,Initial Approval,Continuing Approval\n"
+        "2024,ACME ANALYTICS INC,3,5\n")
+    sponsors = tmp_path / "sponsors.txt"
+    sponsors.write_text("# starter\nCapital One\n")
+    monkeypatch.setattr(b, "DATA_DIR", data)
+    monkeypatch.setattr(b, "SPONSORS_FILE", sponsors)
+    monkeypatch.setattr("sys.argv", ["build_sponsors.py"])
+    assert b.main() == 0
+    names = [l for l in sponsors.read_text().splitlines() if l and not l.startswith("#")]
+    assert names == ["acme analytics", "beta data", "capital one"], names
+
 
 if __name__ == "__main__":
     import pytest

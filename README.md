@@ -10,7 +10,7 @@ so your laptop can be off.
 | Step | What happens |
 |---|---|
 | 1 | Every 15 minutes GitHub runs `watcher.py` |
-| 2 | It pulls jobs posted in the last 2 hours from Indeed, LinkedIn and Google Jobs |
+| 2 | It pulls jobs posted in the last 2 hours from Indeed, LinkedIn, Google Jobs, ZipRecruiter and Glassdoor |
 | 3 | Keeps analyst titles; drops Principal, Lead, Manager, Intern, III/IV, clearance |
 | 4 | Drops jobs asking for more than 3 years of experience |
 | 5 | Drops postings that say "no sponsorship", "US citizen only", "clearance required" |
@@ -70,29 +70,24 @@ The very first run does not alert. It saves current jobs and sends one
 4. Run again with mode `normal`. You get "Job Watcher is running".
    From now on it runs by itself every 15 minutes.
 
-## Make the sponsor list much bigger (recommended)
+## Sponsor list (automatic)
 
-The starter `sponsors.txt` has about 115 large sponsors. The official USCIS data
-has thousands. More sponsors means more alerts for real sponsoring companies.
+The workflow **Update Sponsors** downloads the official USCIS H-1B Employer
+Data Hub export and rebuilds `sponsors.txt` on the 1st of every month.
+Run it once by hand after setup: **Actions > Update Sponsors > Run workflow**.
+The log shows how many sponsors were written.
 
-1. Open https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub
-2. Download the data files for the last 2 to 3 fiscal years (CSV).
-3. On your computer, create a folder `uscis_data` inside `job-watcher` and put the CSVs there.
-4. Run:
-
-   ```bash
-   pip install -r requirements.txt
-   python build_sponsors.py
-   ```
-
-5. Commit and push the updated `sponsors.txt`.
+Manual alternative: download CSVs from
+https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub into a
+`uscis_data` folder, run `python build_sponsors.py`, then commit `sponsors.txt`.
 
 ## Settings you may want to change (top of `watcher.py`)
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `SEARCH_TERMS` | data analyst, business analyst, BI analyst | What to search |
-| `SITES` | indeed, linkedin, google | Where to search |
+| `SITES` | indeed, linkedin, google, zip_recruiter, glassdoor | Where to search. Blocked sites are logged and skipped |
+| `COMPANY_EXCLUDE` | empty | Company name regexes to skip |
 | `MAX_YEARS_EXPERIENCE` | 3 | Drop jobs asking for more |
 | `ALERT_UNKNOWN_SPONSOR` | False | True = also alert when company is not a known sponsor and the posting says nothing either way |
 | `TITLE_INCLUDE` / `TITLE_EXCLUDE` | see file | Title filters |

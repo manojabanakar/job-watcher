@@ -1,0 +1,65 @@
+name: Update Sponsors
+
+# Downloads the official USCIS H-1B Employer Data Hub export and rebuilds
+# sponsors.txt. Runs on the 1st of every month, or start it by hand from
+# the Actions tab (Update Sponsors > Run workflow).
+
+on:
+  schedule:
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: job-watcher
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download USCIS H-1B data
+        run: |
+          mkdir -p uscis_data
+          URL="https://bigdataanalyticspub-sb.uscis.dhs.gov/views/H1BEmployerDataHub-Final/H1BPublic.csv"
+          # Latest fiscal year (default export)
+          curl -fsSL --retry 3 --max-time 300 "$URL" -o uscis_data/latest.csv || echo "latest download failed"
+          # Previous fiscal years (the filter name has a trailing space)
+          for FY in 2025 2024; do
+            curl -fsSL --retry 3 --max-time 300 -G "$URL" \
+              --data-urlencode "Fiscal Year =$FY" \
+              -o "uscis_data/fy$FY.csv" || echo "FY$FY download failed"
+          done
+          ls -la uscis_data
+          head -c 600 uscis_data/latest.csv || true
+
+      - name: Build sponsors.txt
+        run: python build_sponsors.py
+
+      - name: Save sponsors.txt
+        run: |
+          git config user.name "job-watcher-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sponsors.txt
+          if git diff --cached --quiet; then
+            echo "Sponsor list unchanged."
+          else
+            git commit -m "Update H-1B sponsor list [skip ci]"
+            git pull --rebase --autostash || true
+            git push
+          fi

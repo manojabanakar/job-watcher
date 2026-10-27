@@ -1,15 +1,25 @@
 """
-Build sponsors.txt from the official USCIS H-1B Employer Data Hub export.
+Build sponsors.txt from the official USCIS H-1B Employer Data Hub.
 
-1. Go to https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub
-2. Download the data file(s) for the most recent 2-3 fiscal years (CSV).
-3. Put the CSV file(s) in a folder named uscis_data/ next to this script.
-4. Run:  python build_sponsors.py
+Automatic (recommended): the GitHub workflow "Update Sponsors" downloads the
+USCIS data into uscis_data/ and runs this script once a month. You can also
+start it any time from the Actions tab.
+
+Manual:
+1. Download CSV(s) from https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub
+2. Put them in a folder named uscis_data/ next to this script.
+3. Run:  python build_sponsors.py
          python build_sponsors.py --min-approvals 2   (stricter)
 
-The script keeps employers with at least N approvals for NEW employment
-(first-time H-1B, not just renewals), merges them with the starter list
-already in sponsors.txt, and rewrites sponsors.txt.
+Handles both USCIS formats:
+- Old "wide" files: one row per employer with columns like
+  "Initial Approval" / "New Employment Approval".
+- New "long" Tableau export: one row per employer per measure, with a
+  measure-name column and a measure-value column.
+
+Keeps employers with at least N approvals for NEW employment (first-time
+H-1B, not just renewals), merges them with the names already in
+sponsors.txt, and rewrites sponsors.txt.
 """
 
 import argparse
@@ -25,16 +35,19 @@ DATA_DIR = ROOT / "uscis_data"
 
 
 def to_int(value) -> int:
+    text = str(value or "").replace(",", "").strip()
+    if not text:
+        return 0
     try:
-        return int(str(value).replace(",", "").strip() or 0)
+        return int(float(text))
     except ValueError:
         return 0
 
 
 def find_column(headers, *needles):
-    """First header containing all needle words (case-insensitive)."""
+    """First header containing all needle words (case-insensitive, spaces trimmed)."""
     for h in headers:
-        low = h.lower()
+        low = " ".join(h.lower().split())
         if all(n in low for n in needles):
             return h
     return None
@@ -53,6 +66,83 @@ def read_csv_any_encoding(path: Path):
     raise ValueError(f"Could not decode {path}")
 
 
+def is_new_approval_measure(name: str) -> bool:
+    low = " ".join((name or "").lower().split())
+    return "approval" in low and ("initial" in low or "new employment" in low)
+
+
+def parse_file(path: Path, totals: dict) -> bool:
+    """Adds new-employment approvals per employer into totals. Returns True if parsed."""
+    rows = read_csv_any_encoding(path)
+    if not rows:
+        print(f"{path.name}: empty")
+        return False
+    headers = list(rows[0].keys())
+    print(f"{path.name}: {len(rows)} rows")
+    print(f"  headers: {headers}")
+    for sample in rows[:2]:
+        print(f"  sample: {dict(list(sample.items())[:8])}")
+
+    name_col = (find_column(headers, "employer")
+                or find_column(headers, "petitioner", "name"))
+    if not name_col:
+        print("  SKIPPED: no employer column found")
+        return False
+
+    # Format 1: wide (one approval column)
+    wide_col = (find_column(headers, "initial", "approval")
+                or find_column(headers, "new employment", "approval"))
+    if wide_col:
+        print(f"  format: wide (name='{name_col}', approvals='{wide_col}')")
+        for row in rows:
+            norm = normalize_company(row.get(name_col))
+            if norm:
+                totals[norm] = totals.get(norm, 0) + to_int(row.get(wide_col))
+        return True
+
+    # Format 2: long (measure name + measure value)
+    measure_col = (find_column(headers, "measure names")
+                   or find_column(headers, "measure", "name")
+                   or find_column(headers, "measure"))
+    value_col = (find_column(headers, "measure values")
+                 or find_column(headers, "value"))
+    if measure_col and value_col and measure_col != value_col:
+        measures = sorted({(r.get(measure_col) or "").strip() for r in rows})
+        print(f"  format: long (name='{name_col}', measure='{measure_col}', value='{value_col}')")
+        print(f"  measures found: {measures[:20]}")
+        used = 0
+        for row in rows:
+            if not is_new_approval_measure(row.get(measure_col)):
+                continue
+            norm = normalize_company(row.get(name_col))
+            if norm:
+                totals[norm] = totals.get(norm, 0) + to_int(row.get(value_col))
+                used += 1
+        if used:
+            return True
+        print("  no 'initial/new employment approval' measure; counting any approval measure")
+        for row in rows:
+            if "approval" not in (row.get(measure_col) or "").lower():
+                continue
+            norm = normalize_company(row.get(name_col))
+            if norm:
+                totals[norm] = totals.get(norm, 0) + to_int(row.get(value_col))
+        return True
+
+    # Format 3: unknown layout, sum every column that mentions approval
+    approval_cols = [h for h in headers if "approval" in h.lower()]
+    if approval_cols:
+        print(f"  format: other (summing {approval_cols})")
+        for row in rows:
+            norm = normalize_company(row.get(name_col))
+            if norm:
+                totals[norm] = totals.get(norm, 0) + sum(to_int(row.get(c)) for c in approval_cols)
+        return True
+
+    print("  SKIPPED: could not find approval numbers")
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--min-approvals", type=int, default=1,
@@ -65,32 +155,21 @@ def main() -> int:
         return 1
 
     totals = {}
-    display = {}
+    parsed = 0
     for path in files:
-        rows = read_csv_any_encoding(path)
-        if not rows:
-            continue
-        headers = list(rows[0].keys())
-        name_col = find_column(headers, "employer") or find_column(headers, "petitioner", "name")
-        # Older files: "Initial Approval"; newer files: "New Employment Approval"
-        new_col = (find_column(headers, "initial", "approval")
-                   or find_column(headers, "new employment", "approval"))
-        if not name_col or not new_col:
-            print(f"Skipping {path.name}: columns not recognized. Headers: {headers}")
-            continue
-        print(f"{path.name}: {len(rows)} rows (name='{name_col}', approvals='{new_col}')")
-        for row in rows:
-            name = (row.get(name_col) or "").strip()
-            norm = normalize_company(name)
-            if not norm:
-                continue
-            totals[norm] = totals.get(norm, 0) + to_int(row.get(new_col))
-            display.setdefault(norm, name)
+        try:
+            if parse_file(path, totals):
+                parsed += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"{path.name}: FAILED ({type(exc).__name__}: {exc})")
+
+    if not parsed:
+        print("No files could be parsed. sponsors.txt left unchanged.")
+        return 1
 
     keep = {n for n, total in totals.items() if total >= args.min_approvals}
     print(f"Employers with >= {args.min_approvals} new-employment approvals: {len(keep)}")
 
-    # Keep the hand-written starter list too
     existing = []
     if SPONSORS_FILE.exists():
         for line in SPONSORS_FILE.read_text(encoding="utf-8").splitlines():
