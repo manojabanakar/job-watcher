@@ -135,12 +135,19 @@ LOCATION = "United States"
 # first seen there may be up to ~24 hours old.
 SITES = ["indeed", "linkedin", "google", "zip_recruiter", "glassdoor"]
 
-# Only look at jobs posted within this many hours. Runs every 15 min, so 2
-# hours gives overlap if a run is late. Already-alerted jobs are skipped.
-HOURS_OLD = 2
+# Look-back window. GitHub often runs the schedule hours late, so each search
+# looks back to the last time THAT site+term was searched successfully (saved
+# in state.json), plus 1 hour of overlap. Never less than HOURS_OLD_MIN, never
+# more than HOURS_OLD_MAX. Already-alerted jobs are skipped.
+HOURS_OLD_MIN = 2
+HOURS_OLD_MAX = 48
+HOURS_OLD_FIRST_TIME = 24   # window for a search never run before
 
-# How many results to pull per site per search term.
+# How many results to pull per search: RESULTS_PER_SEARCH for a short window,
+# growing with the window up to the caps (LinkedIn lower: it rate-limits).
 RESULTS_PER_SEARCH = 50
+RESULTS_MAX = 200
+RESULTS_MAX_LINKEDIN = 100
 
 # LinkedIn rate-limits (HTTP 429) when searched back to back. Wait this many
 # seconds between LinkedIn searches, and on a 429 wait LINKEDIN_RETRY_WAIT
@@ -150,21 +157,36 @@ LINKEDIN_RETRY_WAIT = 60
 
 # Each LinkedIn search also opens ~50 job pages for descriptions, so all
 # terms every run triggers rate limits. LinkedIn searches only this many terms
-# per run, rotating every 15 minutes; with HOURS_OLD = 2 every term is still
-# covered several times inside the look-back window. Other sites search all.
+# per run: the ones searched least recently (see state.json), so every term
+# takes its turn and its next search looks back far enough to cover the gap.
 LINKEDIN_TERMS_PER_RUN = 4
 
 
-def linkedin_terms_this_run(now_ts=None):
-    """Rotating slice of SEARCH_TERMS for LinkedIn, based on the 15-minute slot."""
-    import time
-    terms = SEARCH_TERMS
+def linkedin_terms_this_run(state=None):
+    """The LINKEDIN_TERMS_PER_RUN terms searched longest ago on LinkedIn.
+    Never-searched terms come first; ties keep SEARCH_TERMS order."""
+    last = (state or {}).get("last_searched", {})
+    terms = list(SEARCH_TERMS)
     n = min(LINKEDIN_TERMS_PER_RUN, len(terms))
-    if n >= len(terms):
-        return list(terms)
-    slot = int((now_ts if now_ts is not None else time.time()) // 900)
-    start = (slot * n) % len(terms)
-    return [terms[(start + i) % len(terms)] for i in range(n)]
+    ranked = sorted(terms, key=lambda t: last.get(f"linkedin|{t}", ""))
+    return ranked[:n]
+
+
+def window_for(site: str, term: str, state: dict, now: datetime):
+    """(hours_old, results_wanted) for one search."""
+    stamp = (state or {}).get("last_searched", {}).get(f"{site}|{term}")
+    if stamp:
+        try:
+            gap = (now - datetime.fromisoformat(stamp)).total_seconds() / 3600
+            hours = int(gap) + 2   # round up + 1 hour overlap
+        except ValueError:
+            hours = HOURS_OLD_FIRST_TIME
+    else:
+        hours = HOURS_OLD_FIRST_TIME
+    hours = max(HOURS_OLD_MIN, min(HOURS_OLD_MAX, hours))
+    cap = RESULTS_MAX_LINKEDIN if site == "linkedin" else RESULTS_MAX
+    results = min(cap, RESULTS_PER_SEARCH * max(1, -(-hours // 4)))
+    return hours, results
 
 # Fetch full LinkedIn descriptions (needed for sponsorship/experience checks).
 # Slower and more likely to be rate limited. Set False if LinkedIn keeps failing.
@@ -250,6 +272,7 @@ SEEN_RETENTION_DAYS = 21
 
 ROOT = Path(__file__).resolve().parent
 SEEN_FILE = ROOT / "seen.json"
+STATE_FILE = ROOT / "state.json"
 SPONSORS_FILE = ROOT / "sponsors.txt"
 
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
@@ -384,6 +407,20 @@ def header_safe(text: str) -> str:
 # STATE
 # =============================================================================
 
+def load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        print("WARNING: state.json unreadable, starting fresh")
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=1, sort_keys=True), encoding="utf-8")
+
+
 def load_seen() -> dict:
     if not SEEN_FILE.exists():
         return {}
@@ -410,7 +447,7 @@ def save_seen(seen: dict) -> None:
 # SCRAPING
 # =============================================================================
 
-def scrape_all():
+def scrape_all(state=None, now=None):
     """Returns list of job dicts. Each site runs separately so one failure
     does not stop the others."""
     from jobspy import scrape_jobs  # imported here so tests run without it
@@ -423,18 +460,22 @@ def scrape_all():
 
     jobs = []
     linkedin_calls = 0
-    li_terms = set(linkedin_terms_this_run())
+    state = state if state is not None else {}
+    now = now or datetime.now(timezone.utc)
+    last = state.setdefault("last_searched", {})
+    li_terms = set(linkedin_terms_this_run(state))
     print(f"  LinkedIn terms this run: {sorted(li_terms)}")
     for term in SEARCH_TERMS:
         for site in SITES:
             if site == "linkedin" and term not in li_terms:
                 continue
+            hours, results = window_for(site, term, state, now)
             kwargs = dict(
                 site_name=[site],
                 search_term=term,
                 location=LOCATION,
-                results_wanted=RESULTS_PER_SEARCH,
-                hours_old=HOURS_OLD,
+                results_wanted=results,
+                hours_old=hours,
                 country_indeed="USA",
                 verbose=0,
             )
@@ -460,7 +501,9 @@ def scrape_all():
                 continue
             if errors:
                 print(f"  [{site}] '{term}': error {errors}")
-            print(f"  [{site}] '{term}': {len(df)} results")
+            print(f"  [{site}] '{term}': {len(df)} results (last {hours}h)")
+            if not errors:
+                last[f"{site}|{term}"] = now.isoformat(timespec="seconds")
             for row in df.to_dict(orient="records"):
                 jobs.append({
                     "site": clean(row.get("site")) or site,
@@ -609,7 +652,8 @@ def main() -> int:
     first_run = len(seen) == 0
     print(f"Run at {now} | sponsors loaded: {len(sponsors)} | seen: {len(seen)}")
 
-    jobs = scrape_all()
+    state = load_state()
+    jobs = scrape_all(state)
     print(f"Scraped {len(jobs)} postings")
 
     reasons = {}
@@ -649,6 +693,7 @@ def main() -> int:
                   f"{len(matches)} current matches saved; you will be alerted on new ones.",
                   tags="rocket")
         save_seen(seen)
+        save_state(state)
         return 0
 
     sent = 0
@@ -668,6 +713,7 @@ def main() -> int:
         send_push(f"+{extra} more new analyst jobs", "\n".join(lines), tags="clipboard")
 
     save_seen(seen)
+    save_state(state)
     print(f"Sent {sent} alerts.")
     return 0
 

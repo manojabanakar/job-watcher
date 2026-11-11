@@ -72,6 +72,7 @@ def make_job(title, company, desc, location="McLean, VA", site="indeed"):
 def test_full_run(tmp_path, monkeypatch):
     """First run seeds silently; second run alerts only new matches."""
     monkeypatch.setattr(w, "SEEN_FILE", tmp_path / "seen.json")
+    monkeypatch.setattr(w, "STATE_FILE", tmp_path / "state.json")
     sponsors_file = tmp_path / "sponsors.txt"
     sponsors_file.write_text("Capital One\nAmazon\n")
     monkeypatch.setattr(w, "load_sponsors", lambda: w.__dict__["load_sponsors_orig"](sponsors_file))
@@ -79,7 +80,7 @@ def test_full_run(tmp_path, monkeypatch):
     monkeypatch.setattr(w, "send_push", lambda title, msg, click_url="", priority="default", tags="": pushes.append((title, msg, click_url)) or True)
 
     batch1 = [make_job("Data Analyst", "Capital One", "2+ years experience")]
-    monkeypatch.setattr(w, "scrape_all", lambda: batch1)
+    monkeypatch.setattr(w, "scrape_all", lambda *a, **k: batch1)
     monkeypatch.setattr("sys.argv", ["watcher.py"])
     assert w.main() == 0
     assert len(pushes) == 1 and pushes[0][0] == "Job Watcher is running"
@@ -94,7 +95,7 @@ def test_full_run(tmp_path, monkeypatch):
         make_job("Principal Data Analyst", "Capital One", ""),
         make_job("Data Analyst", "Unknown LLC", "Nice team"),
     ]
-    monkeypatch.setattr(w, "scrape_all", lambda: batch2)
+    monkeypatch.setattr(w, "scrape_all", lambda *a, **k: batch2)
     assert w.main() == 0
     titles = sorted(p[0] for p in pushes)
     assert titles == ["Business Analyst", "Senior Data Analyst"], titles
@@ -216,14 +217,50 @@ def test_linkedin_429_retry(monkeypatch):
 
 
 
-def test_linkedin_rotation_covers_every_term_within_two_runs():
-    terms = w.SEARCH_TERMS
-    for slot in range(20):
-        a = set(w.linkedin_terms_this_run(slot * 900))
-        b = set(w.linkedin_terms_this_run((slot + 1) * 900))
-        assert len(a) == min(w.LINKEDIN_TERMS_PER_RUN, len(terms))
-        assert a | b == set(terms), (slot, a, b)
+def test_linkedin_rotation_takes_stalest_terms():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    state = {}
+    covered = []
+    for run in range(2):
+        terms = w.linkedin_terms_this_run(state)
+        assert len(terms) == min(w.LINKEDIN_TERMS_PER_RUN, len(w.SEARCH_TERMS))
+        covered += terms
+        t = (now + timedelta(minutes=15 * run)).isoformat()
+        for term in terms:
+            state.setdefault("last_searched", {})[f"linkedin|{term}"] = t
+    assert set(covered) == set(w.SEARCH_TERMS)
 
+
+def test_window_grows_with_gap():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = lambda h: {"last_searched": {"indeed|data analyst": (now - timedelta(hours=h)).isoformat(),
+                                      "linkedin|data analyst": (now - timedelta(hours=h)).isoformat()}}
+    assert w.window_for("indeed", "data analyst", st(0.25), now) == (2, 50)
+    assert w.window_for("indeed", "data analyst", st(8), now) == (10, 150)
+    assert w.window_for("linkedin", "data analyst", st(8), now) == (10, 100)
+    assert w.window_for("indeed", "data analyst", st(100), now) == (48, 200)
+    assert w.window_for("indeed", "new term", {}, now)[0] == w.HOURS_OLD_FIRST_TIME
+
+
+def test_state_saved_only_for_clean_searches(monkeypatch):
+    import sys, types
+    import pandas as pd
+
+    def fake_scrape(**kw):
+        df = pd.DataFrame([{"site": kw["site_name"][0], "title": "Data Analyst", "company": "Acme",
+                            "location": "VA", "job_url": "u", "description": "d"}])
+        if kw["site_name"][0] == "glassdoor":
+            df.attrs["errors"] = {"glassdoor": "403"}
+        return df
+
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=fake_scrape))
+    monkeypatch.setattr(w, "SEARCH_TERMS", ["data analyst"])
+    monkeypatch.setattr(w, "SITES", ["indeed", "glassdoor"])
+    state = {}
+    w.scrape_all(state)
+    assert set(state["last_searched"]) == {"indeed|data analyst"}
 
 if __name__ == "__main__":
     import pytest

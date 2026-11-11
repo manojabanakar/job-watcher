@@ -10,7 +10,7 @@ so your laptop can be off.
 | Step | What happens |
 |---|---|
 | 1 | Every 15 minutes GitHub runs `watcher.py` |
-| 2 | It pulls jobs posted in the last 2 hours from Indeed, LinkedIn, Google Jobs, ZipRecruiter and Glassdoor |
+| 2 | It pulls jobs posted since the last search (at least 2 hours, at most 48) from Indeed, LinkedIn, Google Jobs, ZipRecruiter and Glassdoor |
 | 3 | Keeps analyst titles; drops Principal, Lead, Manager, Intern, III/IV, clearance |
 | 4 | Drops jobs asking for more than 3 years of experience |
 | 5 | Drops postings that say "no sponsorship", "US citizen only", "clearance required" |
@@ -106,6 +106,23 @@ The log shows how many sponsors were written.
 Manual alternative: download CSVs from
 https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub into a
 `uscis_data` folder, run `python build_sponsors.py`, then commit `sponsors.txt`.
+
+## Reliable 15 minute runs (cron-job.org)
+
+GitHub's own schedule often runs hours late. The watcher covers gaps by
+looking back to its last search (`state.json`), but for fast alerts use a free
+external timer to start the workflow every 15 minutes:
+
+1. Create a fine-grained token: https://github.com/settings/personal-access-tokens/new
+   - Repository access: Only select repositories > `job-watcher`
+   - Permissions > Repository > Actions: Read and write
+2. Sign up at https://cron-job.org and create a cron job:
+   - URL: `https://api.github.com/repos/manojabanakar/job-watcher/actions/workflows/watch.yml/dispatches`
+   - Schedule: every 15 minutes
+   - Advanced > Request method: `POST`
+   - Headers: `Accept: application/vnd.github+json`, `Authorization: Bearer <token>`, `X-GitHub-Api-Version: 2022-11-28`
+   - Request body: `{"ref":"main","inputs":{"mode":"normal"}}`
+3. Test run: cron-job.org should show HTTP 204, and Actions shows a new run.
 
 ## Settings you may want to change (top of `watcher.py`)
 
