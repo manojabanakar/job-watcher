@@ -39,11 +39,17 @@ jobs:
           URL="https://bigdataanalyticspub-sb.uscis.dhs.gov/views/H1BEmployerDataHub-Final/H1BPublic.csv"
           # Latest fiscal year (default export)
           curl -fsSL --retry 3 --max-time 300 "$URL" -o uscis_data/latest.csv || echo "latest download failed"
-          # Previous fiscal years (the filter name has a trailing space)
+          # Previous fiscal years. The filter name is "Fiscal Year" plus 3
+          # trailing spaces, URL-encoded by hand so curl accepts it.
           for FY in 2025 2024; do
-            curl -fsSL --retry 3 --max-time 300 -G "$URL" \
-              --data-urlencode "Fiscal Year =$FY" \
+            curl -fsSL --retry 3 --max-time 300 \
+              "$URL?Fiscal%20Year%20%20%20=$FY" \
               -o "uscis_data/fy$FY.csv" || echo "FY$FY download failed"
+          done
+          # Tableau ignores a filter it does not recognize and returns the
+          # latest year again; drop such duplicates so counts are not doubled.
+          for f in uscis_data/fy*.csv; do
+            [ -f "$f" ] && cmp -s "$f" uscis_data/latest.csv && rm -f "$f" && echo "$f was a duplicate, removed"
           done
           ls -la uscis_data
           head -c 600 uscis_data/latest.csv || true

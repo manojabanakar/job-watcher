@@ -21,6 +21,32 @@ so your laptop can be off.
 The very first run does not alert. It saves current jobs and sends one
 "Job Watcher is running" message, so your phone is not flooded.
 
+## Resume matching
+
+Each alert says which of the 5 resumes to use, for example:
+
+```
+Use: Geospatial Analyst resume
+Capital One
+McLean, VA
+Known H-1B sponsor | 2+ yrs exp
+Skills matched (6): GIS, ArcGIS, Python, SQL, spatial, imagery
+via linkedin
+```
+
+| Resume | Searched as | Title examples |
+|---|---|---|
+| Data Analyst | data analyst | Data Analyst, Product Analyst, Operations Analyst |
+| Business Analyst | business analyst | Business Analyst, Business Operations Analyst |
+| Business Intelligence Analyst | business intelligence analyst | BI Analyst, Power BI Analyst, Reporting Analyst |
+| Data Quality : Governance | data quality analyst, data governance analyst | Data Quality Analyst, Data Steward |
+| Geospatial Analyst | GIS analyst, geospatial analyst | GIS Analyst, Remote Sensing Analyst |
+
+The resume is chosen by title match plus how many of that resume's skills
+appear in the description. Jobs whose description matches fewer than
+`MIN_SKILL_MATCHES` (2) skills are skipped. Edit `RESUMES` at the top of
+`watcher.py` to change searches, titles or skills.
+
 ## Setup checklist (about 15 minutes)
 
 ### A. Phone app
@@ -85,7 +111,8 @@ https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub into a
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `SEARCH_TERMS` | data analyst, business analyst, BI analyst | What to search |
+| `RESUMES` | 5 resumes | Searches, titles and skills per resume |
+| `MIN_SKILL_MATCHES` | 2 | Skip jobs matching fewer of your skills |
 | `SITES` | indeed, linkedin, google, zip_recruiter, glassdoor | Where to search. Blocked sites are logged and skipped |
 | `COMPANY_EXCLUDE` | empty | Company name regexes to skip |
 | `MAX_YEARS_EXPERIENCE` | 3 | Drop jobs asking for more |

@@ -140,6 +140,54 @@ def test_build_sponsors_long_and_wide(tmp_path, monkeypatch):
     assert names == ["acme analytics", "beta data", "capital one"], names
 
 
+def test_titles_for_all_five_resumes():
+    for t in ["GIS Analyst", "Geospatial Data Analyst", "Remote Sensing Analyst I",
+              "Data Quality Analyst", "Data Governance Analyst", "Data Steward",
+              "Power BI Analyst", "Reporting Analyst", "Business Operations Analyst"]:
+        assert w.title_ok(t), t
+    for t in ["GIS Manager", "Lead Data Quality Analyst", "Principal Geospatial Analyst"]:
+        assert not w.title_ok(t), t
+
+
+def test_pick_resume():
+    long_gis = "Use ArcGIS, QGIS and Python with satellite imagery and raster data. " * 5
+    assert w.pick_resume("GIS Analyst", long_gis)[0] == "Geospatial Analyst"
+    assert w.pick_resume("Geospatial Data Analyst", long_gis)[0] == "Geospatial Analyst"
+    assert w.pick_resume("Data Quality Analyst", "data profiling and data lineage")[0] == "Data Quality : Governance"
+    assert w.pick_resume("BI Analyst", "Power BI and DAX dashboards")[0] == "Business Intelligence Analyst"
+    assert w.pick_resume("Business Analyst", "gather requirements from stakeholder groups")[0] == "Business Analyst"
+    assert w.pick_resume("Data Analyst", "SQL and Python")[0] == "Data Analyst"
+    # Generic title: description decides
+    name, skills, title_hit = w.pick_resume("Operations Analyst", "Build Power BI dashboards with DAX, Power Query and Tableau. KPI reporting.")
+    assert name == "Business Intelligence Analyst" and not title_hit
+    # Generic Business Analyst title with a business-analysis description stays BA
+    assert w.pick_resume("Business Analyst", "Work with stakeholder teams on requirements, SQL and Excel")[0] == "Business Analyst"
+    # 'SQL' must not match inside 'NoSQL'; 'Git' not inside 'digital'
+    assert "SQL" not in w.matched_skills("Data Analyst", "NoSQL stores")
+    assert "Git" not in w.matched_skills("Data Analyst", "digital products")
+
+
+def test_low_skill_match_dropped():
+    desc = ("We need someone for warehouse picking and forklift operations. " * 10) + "2 years experience"
+    job = make_job("Operations Analyst", "Capital One", desc)
+    keep, reason, _, _ = w.evaluate(job, SPONSORS)
+    assert not keep and reason == "low skill match"
+    desc2 = ("Analyze data with SQL, Python and Tableau. " * 10) + "2 years experience"
+    job2 = make_job("Data Analyst", "Capital One", desc2)
+    keep, _, _, _ = w.evaluate(job2, SPONSORS)
+    assert keep and job2["resume"] == "Data Analyst" and len(job2["skills"]) >= 3
+
+
+def test_alert_message_names_resume(monkeypatch):
+    sent = []
+    monkeypatch.setattr(w, "send_push", lambda title, msg, click_url="", priority="default", tags="": sent.append(msg) or True)
+    job = make_job("GIS Analyst", "Capital One", "ArcGIS QGIS Python")
+    job["resume"], job["skills"] = "Geospatial Analyst", ["ArcGIS", "QGIS", "Python"]
+    w.notify_job(job, "KNOWN", 2)
+    assert sent[0].startswith("Use: Geospatial Analyst resume")
+    assert "Skills matched (3): ArcGIS, QGIS, Python" in sent[0]
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))

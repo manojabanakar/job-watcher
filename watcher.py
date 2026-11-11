@@ -29,11 +29,103 @@ import requests
 # SETTINGS (edit these)
 # =============================================================================
 
-SEARCH_TERMS = [
-    "data analyst",
-    "business analyst",
-    "business intelligence analyst",
-]
+# =============================================================================
+# YOUR 5 RESUMES
+# Each alert says which resume to use. Folder names match
+# ~/Desktop/Resume_1/<name>/Manoj_Resume.pdf
+#   search:  terms searched on the job sites for this resume
+#   titles:  job titles this resume is built for (regex, case-insensitive)
+#   skills:  skills on this resume; matched against the job description
+#   title_weight: how much a title match counts versus each matched skill.
+#            Specific titles (GIS, Data Quality) count a lot; generic ones
+#            (Data Analyst, Business Analyst) less, so the description decides.
+# Order matters only to break ties (more specific resumes first).
+# =============================================================================
+
+RESUMES = {
+    "Geospatial Analyst": {
+        "title_weight": 10,
+        "search": ["GIS analyst", "geospatial analyst"],
+        "titles": [
+            r"\bgis\b.*\banalyst\b", r"\bgeospatial\b.*\banalyst\b",
+            r"\bremote sensing\b.*\banalyst\b", r"\bspatial data analyst\b",
+            r"\bgis specialist\b", r"\bgeospatial specialist\b",
+        ],
+        "skills": [
+            "GIS", "ArcGIS", "QGIS", "PostGIS", "GeoPandas", "Rasterio", "Shapely",
+            "GeoJSON", "GeoTIFF", "spatial", "geospatial", "remote sensing",
+            "satellite", "imagery", "SAR", "Sentinel", "Landsat", "NDVI",
+            "change detection", "DEM", "raster", "Python", "SQL", "PostgreSQL",
+        ],
+    },
+    "Data Quality : Governance": {
+        "title_weight": 10,
+        "search": ["data quality analyst", "data governance analyst"],
+        "titles": [
+            r"\bdata quality\b", r"\bdata governance\b", r"\bdata steward",
+            r"\bdata integrity analyst\b", r"\bdata management analyst\b",
+        ],
+        "skills": [
+            "data quality", "data governance", "data profiling", "data validation",
+            "data lineage", "metadata", "reconciliation", "data integrity",
+            "duplicate", "completeness", "ETL", "SQL", "Python", "Pandas",
+            "Power BI", "Excel", "Snowflake", "Databricks", "data stewardship",
+            "data standards", "audit",
+        ],
+    },
+    "Business Intelligence Analyst": {
+        "title_weight": 6,
+        "search": ["business intelligence analyst"],
+        "titles": [
+            r"\bbusiness intelligence\b", r"\bbi analyst\b", r"\bpower bi\b",
+            r"\breporting analyst\b", r"\binsights analyst\b",
+            r"\bbi developer\b", r"\bdashboard\b",
+        ],
+        "skills": [
+            "Power BI", "DAX", "Power Query", "Tableau", "Tableau Prep", "dashboard",
+            "KPI", "data model", "star schema", "data warehouse", "ETL", "SQL",
+            "Excel", "Snowflake", "Fabric", "Redshift", "BigQuery", "reporting",
+            "visualization", "SQL Server",
+        ],
+    },
+    "Business Analyst": {
+        "title_weight": 3,
+        "search": ["business analyst"],
+        "titles": [
+            r"\bbusiness analyst\b", r"\bbusiness operations analyst\b",
+            r"\bsales operations analyst\b", r"\bstrategy analyst\b",
+        ],
+        "skills": [
+            "requirements", "stakeholder", "business rules", "process improvement",
+            "process documentation", "vendor", "risk assessment", "PowerPoint",
+            "Excel", "SQL", "Power BI", "Tableau", "Confluence", "SharePoint",
+            "Salesforce", "KPI", "decision support", "business analysis",
+            "cross-functional", "recommendations",
+        ],
+    },
+    "Data Analyst": {
+        "title_weight": 3,
+        "search": ["data analyst"],
+        "titles": [
+            r"\bdata analyst\b", r"\banalytics analyst\b",
+            r"\bdata\s*(and|&)\s*analytics analyst\b", r"\bproduct analyst\b",
+            r"\boperations analyst\b",
+        ],
+        "skills": [
+            "SQL", "Python", "Pandas", "NumPy", "Excel", "Power BI", "Tableau",
+            "ETL", "data quality", "data validation", "statistical",
+            "hypothesis", "dashboard", "Snowflake", "BigQuery", "Databricks",
+            "Redshift", "PostgreSQL", "AWS", "Git", "cohort", "segmentation",
+        ],
+    },
+}
+
+# Jobs whose description mentions fewer of the best resume's skills than this
+# are skipped. Only applied when the description is long enough to judge.
+MIN_SKILL_MATCHES = 2
+
+# Searched terms = all resume search terms, without duplicates.
+SEARCH_TERMS = list(dict.fromkeys(t for r in RESUMES.values() for t in r["search"]))
 
 LOCATION = "United States"
 
@@ -54,19 +146,8 @@ RESULTS_PER_SEARCH = 50
 # Slower and more likely to be rate limited. Set False if LinkedIn keeps failing.
 FETCH_LINKEDIN_DESCRIPTION = True
 
-# Title must match at least one of these (case-insensitive regex).
-TITLE_INCLUDE = [
-    r"\bdata analyst\b",
-    r"\bbusiness analyst\b",
-    r"\bbusiness intelligence analyst\b",
-    r"\bbi analyst\b",
-    r"\banalytics analyst\b",
-    r"\breporting analyst\b",
-    r"\binsights analyst\b",
-    r"\bdata\s*(and|&)\s*analytics analyst\b",
-    r"\bproduct analyst\b",
-    r"\boperations analyst\b",
-]
+# Title must match at least one resume's title patterns (see RESUMES).
+TITLE_INCLUDE = [p for r in RESUMES.values() for p in r["titles"]]
 
 # Title must NOT match any of these. "Senior" is allowed on purpose; the
 # experience check below decides if a Senior role is within reach.
@@ -351,11 +432,46 @@ def scrape_all():
 
 
 # =============================================================================
+# RESUME PICKING
+# =============================================================================
+
+def _skill_pattern(skill: str) -> str:
+    return r"(?<![a-z0-9])" + re.escape(skill.lower()) + r"(?![a-z0-9])"
+
+
+_SKILL_RE = {
+    name: [(sk, re.compile(_skill_pattern(sk), re.IGNORECASE)) for sk in r["skills"]]
+    for name, r in RESUMES.items()
+}
+
+
+def matched_skills(resume: str, description: str) -> list:
+    text = description or ""
+    return [sk for sk, rx in _SKILL_RE[resume] if rx.search(text)]
+
+
+def pick_resume(title: str, description: str):
+    """Best resume for a job. Score = title_weight if the title matches that
+    resume, plus 1 per resume skill found in the description. Ties go to the
+    resume listed first in RESUMES. Returns (name, matched_skills, title_matched)."""
+    best = None
+    for name, r in RESUMES.items():
+        title_hit = any_match(r["titles"], title or "")
+        skills = matched_skills(name, description)
+        score = (r.get("title_weight", 5) if title_hit else 0) + len(skills)
+        if best is None or score > best[0]:
+            best = (score, name, skills, title_hit)
+    _, name, skills, title_hit = best
+    return name, skills, title_hit
+
+
+# =============================================================================
 # FILTERING
 # =============================================================================
 
 def evaluate(job: dict, sponsors: set):
-    """Returns (keep: bool, reason: str, tag: str|None, years: int|None)."""
+    """Returns (keep: bool, reason: str, tag: str|None, years: int|None).
+    Also stores the chosen resume in job["resume"] and job["skills"]."""
     if not title_ok(job["title"]):
         return False, "title", None, None
     if not job["company"]:
@@ -370,6 +486,10 @@ def evaluate(job: dict, sponsors: set):
         return False, "no sponsorship / clearance", None, years
     if tag == "UNKNOWN" and not ALERT_UNKNOWN_SPONSOR:
         return False, "sponsor unknown", tag, years
+    resume, skills, _ = pick_resume(job["title"], job["description"])
+    job["resume"], job["skills"] = resume, skills
+    if len(job["description"]) >= 300 and len(skills) < MIN_SKILL_MATCHES:
+        return False, "low skill match", tag, years
     return True, "match", tag, years
 
 
@@ -407,10 +527,15 @@ def send_push(title: str, message: str, click_url: str = "", priority: str = "de
 def notify_job(job: dict, tag: str, years) -> bool:
     exp = f"{years}+ yrs exp" if years is not None else "exp not stated"
     remote = " | Remote" if job.get("is_remote") else ""
+    skills = job.get("skills") or []
+    skill_line = (f"Skills matched ({len(skills)}): {', '.join(skills[:6])}"
+                  if skills else "Skills: description not available")
     message = (
+        f"Use: {job.get('resume', 'Data Analyst')} resume\n"
         f"{job['company']}\n"
         f"{job['location'] or 'Location not listed'}{remote}\n"
         f"{TAG_LABEL.get(tag, tag)} | {exp}\n"
+        f"{skill_line}\n"
         f"via {job['site']}"
     )
     priority = "high" if tag == "HIGH" else "default"
@@ -462,7 +587,8 @@ def main() -> int:
     matches.sort(key=lambda m: order.get(m[2], 9))
     for _, job, tag, years in matches:
         print(f"  [{tag}] {job['title']} | {job['company']} | {job['location']} | "
-              f"yrs={years} | {job['url']}")
+              f"yrs={years} | resume={job.get('resume')} | "
+              f"skills={len(job.get('skills') or [])} | {job['url']}")
 
     if args.dry_run:
         print("Dry run: nothing sent, nothing saved.")
@@ -492,7 +618,8 @@ def main() -> int:
     if extra > 0:
         for key, *_ in matches[sent:]:
             seen[key] = now
-        lines = [f"- {j['title']} | {j['company']}" for _, j, _, _ in matches[sent:sent + 15]]
+        lines = [f"- {j['title']} | {j['company']} | {j.get('resume')}"
+                 for _, j, _, _ in matches[sent:sent + 15]]
         send_push(f"+{extra} more new analyst jobs", "\n".join(lines), tags="clipboard")
 
     save_seen(seen)
