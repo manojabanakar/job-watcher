@@ -148,6 +148,24 @@ RESULTS_PER_SEARCH = 50
 LINKEDIN_PAUSE_SECONDS = 20
 LINKEDIN_RETRY_WAIT = 60
 
+# Each LinkedIn search also opens ~50 job pages for descriptions, so all
+# terms every run triggers rate limits. LinkedIn searches only this many terms
+# per run, rotating every 15 minutes; with HOURS_OLD = 2 every term is still
+# covered several times inside the look-back window. Other sites search all.
+LINKEDIN_TERMS_PER_RUN = 4
+
+
+def linkedin_terms_this_run(now_ts=None):
+    """Rotating slice of SEARCH_TERMS for LinkedIn, based on the 15-minute slot."""
+    import time
+    terms = SEARCH_TERMS
+    n = min(LINKEDIN_TERMS_PER_RUN, len(terms))
+    if n >= len(terms):
+        return list(terms)
+    slot = int((now_ts if now_ts is not None else time.time()) // 900)
+    start = (slot * n) % len(terms)
+    return [terms[(start + i) % len(terms)] for i in range(n)]
+
 # Fetch full LinkedIn descriptions (needed for sponsorship/experience checks).
 # Slower and more likely to be rate limited. Set False if LinkedIn keeps failing.
 FETCH_LINKEDIN_DESCRIPTION = True
@@ -405,8 +423,12 @@ def scrape_all():
 
     jobs = []
     linkedin_calls = 0
+    li_terms = set(linkedin_terms_this_run())
+    print(f"  LinkedIn terms this run: {sorted(li_terms)}")
     for term in SEARCH_TERMS:
         for site in SITES:
+            if site == "linkedin" and term not in li_terms:
+                continue
             kwargs = dict(
                 site_name=[site],
                 search_term=term,

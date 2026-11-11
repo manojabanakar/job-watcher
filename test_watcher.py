@@ -205,6 +205,7 @@ def test_linkedin_429_retry(monkeypatch):
     monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=fake_scrape))
     monkeypatch.setattr(w, "SEARCH_TERMS", ["data analyst", "business analyst"])
     monkeypatch.setattr(w, "SITES", ["indeed", "linkedin"])
+    monkeypatch.setattr(w, "LINKEDIN_TERMS_PER_RUN", 4)
     sleeps = []
     import time
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
@@ -212,6 +213,16 @@ def test_linkedin_429_retry(monkeypatch):
     assert calls == ["indeed", "linkedin", "linkedin", "indeed", "linkedin"]
     assert sleeps == [w.LINKEDIN_RETRY_WAIT, w.LINKEDIN_PAUSE_SECONDS]
     assert len(jobs) == 4
+
+
+
+def test_linkedin_rotation_covers_every_term_within_two_runs():
+    terms = w.SEARCH_TERMS
+    for slot in range(20):
+        a = set(w.linkedin_terms_this_run(slot * 900))
+        b = set(w.linkedin_terms_this_run((slot + 1) * 900))
+        assert len(a) == min(w.LINKEDIN_TERMS_PER_RUN, len(terms))
+        assert a | b == set(terms), (slot, a, b)
 
 
 if __name__ == "__main__":
