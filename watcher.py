@@ -142,6 +142,12 @@ HOURS_OLD = 2
 # How many results to pull per site per search term.
 RESULTS_PER_SEARCH = 50
 
+# LinkedIn rate-limits (HTTP 429) when searched back to back. Wait this many
+# seconds between LinkedIn searches, and on a 429 wait LINKEDIN_RETRY_WAIT
+# seconds and retry that search once.
+LINKEDIN_PAUSE_SECONDS = 20
+LINKEDIN_RETRY_WAIT = 60
+
 # Fetch full LinkedIn descriptions (needed for sponsorship/experience checks).
 # Slower and more likely to be rate limited. Set False if LinkedIn keeps failing.
 FETCH_LINKEDIN_DESCRIPTION = True
@@ -391,7 +397,14 @@ def scrape_all():
     does not stop the others."""
     from jobspy import scrape_jobs  # imported here so tests run without it
 
+    import time
+
+    def run(kwargs):
+        df = scrape_jobs(**kwargs)
+        return df, (df.attrs.get("errors") or {})
+
     jobs = []
+    linkedin_calls = 0
     for term in SEARCH_TERMS:
         for site in SITES:
             kwargs = dict(
@@ -407,12 +420,22 @@ def scrape_all():
                 kwargs["google_search_term"] = f"{term} jobs near United States since yesterday"
             if site == "linkedin" and FETCH_LINKEDIN_DESCRIPTION:
                 kwargs["fetch_description"] = True
+            if site == "linkedin":
+                if linkedin_calls:
+                    time.sleep(LINKEDIN_PAUSE_SECONDS)
+                linkedin_calls += 1
             try:
-                df = scrape_jobs(**kwargs)
+                df, errors = run(kwargs)
+                if site == "linkedin" and "429" in str(errors):
+                    print(f"  [linkedin] '{term}': rate limited ({len(df)} results), "
+                          f"retrying in {LINKEDIN_RETRY_WAIT}s")
+                    time.sleep(LINKEDIN_RETRY_WAIT)
+                    df2, errors2 = run(kwargs)
+                    if len(df2) >= len(df):
+                        df, errors = df2, errors2
             except Exception as exc:  # noqa: BLE001
                 print(f"  [{site}] '{term}': FAILED ({type(exc).__name__}: {exc})")
                 continue
-            errors = df.attrs.get("errors") or {}
             if errors:
                 print(f"  [{site}] '{term}': error {errors}")
             print(f"  [{site}] '{term}': {len(df)} results")

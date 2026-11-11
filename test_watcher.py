@@ -188,6 +188,32 @@ def test_alert_message_names_resume(monkeypatch):
     assert "Skills matched (3): ArcGIS, QGIS, Python" in sent[0]
 
 
+def test_linkedin_429_retry(monkeypatch):
+    import sys, types
+    import pandas as pd
+    calls = []
+
+    def fake_scrape(**kw):
+        calls.append(kw["site_name"][0])
+        df = pd.DataFrame([{"site": kw["site_name"][0], "title": "Data Analyst", "company": "Acme",
+                            "location": "VA", "job_url": "u", "description": "d"}])
+        if kw["site_name"][0] == "linkedin" and calls.count("linkedin") == 1:
+            df = df.iloc[0:0]
+            df.attrs["errors"] = {"linkedin": "response status code 429 (blocked: use a proxy)"}
+        return df
+
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=fake_scrape))
+    monkeypatch.setattr(w, "SEARCH_TERMS", ["data analyst", "business analyst"])
+    monkeypatch.setattr(w, "SITES", ["indeed", "linkedin"])
+    sleeps = []
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+    jobs = w.scrape_all()
+    assert calls == ["indeed", "linkedin", "linkedin", "indeed", "linkedin"]
+    assert sleeps == [w.LINKEDIN_RETRY_WAIT, w.LINKEDIN_PAUSE_SECONDS]
+    assert len(jobs) == 4
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
