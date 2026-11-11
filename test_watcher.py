@@ -262,6 +262,20 @@ def test_state_saved_only_for_clean_searches(monkeypatch):
     w.scrape_all(state)
     assert set(state["last_searched"]) == {"indeed|data analyst"}
 
+
+def test_merge_state_keeps_both_runs():
+    import merge_state as m
+    base_seen = {"a": "2026-11-11T19:00:00+00:00", "b": "2026-11-11T19:10:00+00:00"}
+    ours_seen = {"b": "2026-11-11T19:05:00+00:00", "c": "2026-11-11T19:40:00+00:00"}
+    assert m.merge_seen(base_seen, ours_seen) == {
+        "a": "2026-11-11T19:00:00+00:00", "b": "2026-11-11T19:10:00+00:00",
+        "c": "2026-11-11T19:40:00+00:00"}
+    base = {"last_searched": {"indeed|x": "2026-11-11T19:00:00+00:00"}}
+    ours = {"last_searched": {"indeed|x": "2026-11-11T19:35:00+00:00",
+                              "linkedin|y": "2026-11-11T19:20:00+00:00"}}
+    assert m.merge_state(base, ours)["last_searched"] == ours["last_searched"]
+    assert m.merge_state({}, {})["last_searched"] == {}
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
